@@ -186,8 +186,8 @@ enum bootstrap_handle_index {
     BOOTSTRAP_BOOTFS,
     BOOTSTRAP_RAMDISK,
     BOOTSTRAP_STACK,
-    //BOOTSTRAP_PROC, TODO(mcgrathr): later
-    //BOOTSTRAP_THREAD, TODO(mcgrathr): later
+    BOOTSTRAP_PROC,
+    BOOTSTRAP_THREAD,
     BOOTSTRAP_HANDLES
 };
 
@@ -217,14 +217,12 @@ static uint32_t prepare_bootstrap_msg(struct bootstrap_message* msg) {
         case BOOTSTRAP_RAMDISK:
             info = MX_HND_INFO(MX_HND_TYPE_BOOTFS_VMO, 1);
             break;
-#if 0 // TODO(mcgrathr): later
         case BOOTSTRAP_PROC:
             info = MX_HND_INFO(MX_HND_TYPE_PROC_SELF, 0);
             break;
         case BOOTSTRAP_THREAD:
             info = MX_HND_INFO(MX_HND_TYPE_THREAD_SELF, 0);
             break;
-#endif
         case BOOTSTRAP_STACK:
             info = MX_HND_INFO(MX_HND_TYPE_STACK_VMO, 0);
             break;
@@ -268,9 +266,11 @@ static int attempt_userboot(const void* bootfs, size_t bfslen) {
 
     mx_rights_t rights;
     utils::RefPtr<Dispatcher> proc_disp;
-    status = ProcessDispatcher::Create("userboot", &proc_disp, &rights);
+    status = ProcessDispatcher::Create("userboot", &proc_disp, &rights, 0);
     if (status < 0)
         return status;
+
+    handles[BOOTSTRAP_PROC].reset(MakeHandle(proc_disp, rights));
 
     auto proc = proc_disp->get_process_dispatcher();
     auto aspace = proc->aspace();
@@ -324,12 +324,11 @@ static int attempt_userboot(const void* bootfs, size_t bfslen) {
 #endif
     }
 
-#if 0 // TODO(mcgrathr): later
     // Create the user thread and stash its handle for the bootstrap message.
     ThreadDispatcher* thread;
     {
         utils::RefPtr<UserThread> ut;
-        status = proc->CreateUserThread("userboot", &ut);
+        status = proc->CreateUserThread("userboot", 0, &ut);
         if (status < 0)
             return status;
         utils::RefPtr<Dispatcher> ut_disp;
@@ -337,10 +336,9 @@ static int attempt_userboot(const void* bootfs, size_t bfslen) {
         if (status < 0)
             return status;
         thread = ut_disp->get_thread_dispatcher();
-        handles[BOOTSTRAP_THREAD] = MakeHandle(utils::move(ut_disp), rights);
+        handles[BOOTSTRAP_THREAD].reset(MakeHandle(utils::move(ut_disp), rights));
     }
     DEBUG_ASSERT(thread);
-#endif
 
     mx_handle_t hv;
     {
@@ -363,12 +361,7 @@ static int attempt_userboot(const void* bootfs, size_t bfslen) {
     }
 
     dprintf(SPEW, "userboot: %-23s @ %#" PRIxPTR "\n", "entry point", entry);
-#if 0 // TODO(mcgrathr): later
     status = proc->Start(thread, entry, sp, hv);
-#else
-    (void)sp;
-    status = proc->Start((void*)(uintptr_t)hv, entry);
-#endif
     if (status != NO_ERROR) {
         printf("userboot: failed to start process %d\n", status);
         return status;
@@ -377,6 +370,7 @@ static int attempt_userboot(const void* bootfs, size_t bfslen) {
     // hold onto a global ref to the boot process.
     // TODO(mcgrathr): This should go away eventually.
     userboot_process = utils::move(proc_disp);
+
     return NO_ERROR;
 }
 
